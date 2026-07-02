@@ -1,0 +1,272 @@
+﻿{% extends "dashboard/base.html" %}
+
+{% block body %}
+<form method="post" action="{% url 'dashboard:index' %}">
+  {% csrf_token %}
+  <input type="hidden" name="var_month" id="var_month_field" value="{{ var_month }}">
+  <div class="container-fluid">
+    <div class="row g-0">
+
+      <!-- ========== サイドバー（前提条件） ========== -->
+      <div class="col-12 col-lg-3 sidebar p-3">
+        <h5 class="mb-3">⚙️ 前提条件</h5>
+        <div class="accordion" id="assumptionsAcc">
+          {% for group_label, fields in form_groups %}
+          <div class="accordion-item">
+            <h2 class="accordion-header">
+              <button
+                class="accordion-button {% if not forloop.first and not forloop.last %}collapsed{% elif not forloop.last %}collapsed{% endif %}"
+                type="button" data-bs-toggle="collapse" data-bs-target="#grp{{ forloop.counter }}">
+                {{ group_label }}
+              </button>
+            </h2>
+            <div id="grp{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.last %}show{% endif %}"
+              data-bs-parent="#assumptionsAcc">
+              <div class="accordion-body py-2">
+                {% for field in fields %}
+                <div class="mb-2">
+                  <label class="form-label">{{ field.label }}</label>
+                  {{ field }}
+                  {% if field.errors %}<div class="text-danger small">{{ field.errors|striptags }}</div>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="d-grid gap-2 mt-3">
+          <button type="submit" class="btn btn-primary btn-sm">🔄 再計算する</button>
+          <a href="{% url 'dashboard:reset' %}" class="btn btn-outline-secondary btn-sm">既定値に戻す</a>
+        </div>
+      </div>
+
+      <!-- ========== メイン ========== -->
+      <div class="col-12 col-lg-9 p-4">
+        <h3 class="app-title mb-4">💰 月次資金繰り＋3ヶ月予測ダッシュボード</h3>
+
+        <ul class="nav nav-tabs" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab1"
+              type="button">📊 ダッシュボード</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab2" type="button">📋
+              月次資金繰り表</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab3" type="button">📝
+              実績入力 &amp; 予実差異</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab4" type="button">🎯
+              シナリオ分析</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab5" type="button">📥
+              ダウンロード</button></li>
+        </ul>
+
+        <div class="tab-content pt-4">
+
+          <!-- Tab1: ダッシュボード -->
+          <div class="tab-pane fade show active" id="tab1">
+            <h5 class="mb-3">📊 主要KPI</h5>
+            <div class="row g-3 mb-3">
+              {% for k in kpis %}
+              <div class="col-6 col-md-3">
+                <div class="kpi-card">
+                  <div class="kpi-label">{{ k.label }}</div>
+                  <div class="kpi-value">{{ k.value }}</div>
+                  {% if k.delta %}<div class="kpi-delta {% if k.good %}up{% else %}down{% endif %}">{{ k.delta }}</div>
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% if balance_alert_ok %}
+            <div class="alert alert-success">✅ 基準シナリオでは最低残高を確保</div>
+            {% else %}
+            <div class="alert alert-danger">⚠️ 最低残高 {{ min_cash }}万円 を下回ります</div>
+            {% endif %}
+            <div id="figBalance" class="mb-4"></div>
+            <h5 class="mb-3">📈 月次キャッシュフロー構成</h5>
+            <div id="figCf"></div>
+          </div>
+
+          <!-- Tab2: 月次資金繰り表 -->
+          <div class="tab-pane fade" id="tab2">
+            <h5 class="mb-2">📋 月次資金繰り表（計画・万円）</h5>
+            <p class="text-muted small">🔵 最終残高 ｜ ■ 重要小計 ｜ ▶ カテゴリ小計 ｜ 通常 = 内訳</p>
+            <div class="table-responsive">
+              <table class="table table-bordered table-sm cf-table mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>項目</th>{% for c in plan_cols %}<th>{{ c }}</th>{% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in plan_rows %}
+                  <tr class="{{ r.css }}">
+                    <td>{{ r.label }}</td>
+                    {% for v in r.values %}<td>{{ v }}</td>{% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab3: 実績入力 & 予実差異 -->
+          <div class="tab-pane fade" id="tab3">
+            <h5 class="mb-2">📝 実績入力（編集可能・万円）</h5>
+            <p class="text-muted small">セルを編集して「再計算する」を押してください</p>
+            <div class="table-responsive actual-grid mb-3">
+              <table class="table table-bordered table-sm">
+                <thead class="table-light">
+                  <tr>
+                    <th>項目</th>{% for m in month_labels %}<th class="text-end">{{ m }}</th>{% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in actual_grid %}
+                  <tr>
+                    <td>{{ row.label }}</td>
+                    {% for cell in row.cells %}
+                    <td><input type="number" step="any" name="{{ cell.name }}" value="{{ cell.value }}"></td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm mb-4">📝 実績を反映して再計算</button>
+
+            <hr>
+            <h5 class="mb-3">📊 予実差異分析</h5>
+            <div class="row mb-3">
+              <div class="col-md-4">
+                <label class="form-label">📅 表示する月</label>
+                <select class="form-select form-select-sm" id="varMonthSelect"
+                  onchange="document.getElementById('var_month_field').value=this.value; this.form.submit();">
+                  {% for m in month_labels %}
+                  <option value="{{ m }}" {% if m == var_month %}selected{% endif %}>{{ m }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-bordered table-sm">
+                <thead class="table-light">
+                  <tr>
+                    <th>項目</th>
+                    <th class="text-end">計画</th>
+                    <th class="text-end">実績</th>
+                    <th class="text-end">差異</th>
+                    <th class="text-end">差異率</th>
+                    <th>評価</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for v in variance_rows %}
+                  <tr>
+                    <td>{{ v.item }}</td>
+                    <td class="text-end">{{ v.plan }}</td>
+                    <td class="text-end">{{ v.actual }}</td>
+                    <td class="text-end">{{ v.diff }}</td>
+                    <td class="text-end">{{ v.rate }}</td>
+                    <td class="{{ v.eval_css }} text-center">{{ v.eval }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab4: シナリオ分析 -->
+          <div class="tab-pane fade" id="tab4">
+            <h5 class="mb-3">🎯 シナリオ分析（楽観／基準／悲観）</h5>
+            <div class="row g-3 mb-3">
+              {% for m in scenario_metrics %}
+              <div class="col-6 col-md-3">
+                <div class="kpi-card">
+                  <div class="kpi-label">{{ m.label }}</div>
+                  <div class="kpi-value">{{ m.value }}</div>
+                  {% if m.delta %}<div class="kpi-delta {% if m.good %}up{% else %}down{% endif %}">{{ m.delta }}</div>
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            <div id="figScenario" class="mb-4"></div>
+            <div class="table-responsive mb-3">
+              <table class="table table-bordered table-sm">
+                <thead class="table-light">
+                  <tr>
+                    <th>期間</th>
+                    <th class="text-end">楽観</th>
+                    <th class="text-end">基準</th>
+                    <th class="text-end">悲観</th>
+                    <th class="text-end">差分(悲観-楽観)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in scenario_rows %}
+                  <tr>
+                    <td>{{ r.period }}</td>
+                    <td class="text-end">{{ r.opt }}</td>
+                    <td class="text-end">{{ r.base }}</td>
+                    <td class="text-end">{{ r.pess }}</td>
+                    <td class="text-end">{{ r.gap }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <hr>
+            {% if scenario_ok %}
+            <div class="alert alert-success">{{ scenario_msg }}</div>
+            {% else %}
+            <div class="alert alert-danger">{{ scenario_msg }}</div>
+            {% endif %}
+            <strong>【推奨アクション】</strong>
+            <ol class="mb-0">
+              {% for a in scenario_actions %}<li>{{ a }}</li>{% endfor %}
+            </ol>
+          </div>
+
+          <!-- Tab5: ダウンロード -->
+          <div class="tab-pane fade" id="tab5">
+            <h5 class="mb-3">📥 Excel ダウンロード</h5>
+            <p class="text-muted">資金繰り表＋実績入力表を Excel 形式でダウンロードできます。</p>
+            <a href="{% url 'dashboard:download_excel' %}" class="btn btn-success">📥 Excelファイルをダウンロード</a>
+          </div>
+
+        </div>
+
+        <hr class="mt-4">
+        <p class="text-muted small">💡 経営判断の補助ツールです。実際の意思決定は専門家にご相談ください。</p>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script id="figdata" type="application/json">
+  {
+    "balance": {{ figures.balance|safe }},
+    "cf": {{ figures.cf|safe }},
+    "scenario": {{ figures.scenario|safe }}
+  }
+</script>
+<script>
+  // 図データを安全に読み込み（JSON埋め込み方式）
+  const cfg = { responsive: true, displayModeBar: false };
+  const FIG = JSON.parse(document.getElementById('figdata').textContent);
+  function plot(id, fig) { Plotly.newPlot(id, fig.data, fig.layout, cfg); }
+  plot('figBalance', FIG.balance);
+  plot('figCf', FIG.cf);
+  plot('figScenario', FIG.scenario);
+  // タブ表示時にリサイズ（非表示時に描画した図のレイアウト崩れ対策）
+  document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(function (btn) {
+    btn.addEventListener('shown.bs.tab', function () {
+      ['figBalance', 'figCf', 'figScenario'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) { Plotly.Plots.resize(el); }
+      });
+    });
+  });
+</script>
+{% endblock %}
